@@ -3,7 +3,6 @@ constants.py
 """
 
 import os
-
 from pathlib import Path
 
 # Key constants
@@ -19,13 +18,27 @@ ERROR_MESSAGE_NO_INPUT = "Please provide at least one PDF file or a URL."
 ERROR_MESSAGE_NOT_PDF = "The provided file is not a PDF. Please upload only PDF files."
 ERROR_MESSAGE_NOT_SUPPORTED_IN_MELO_TTS = "The selected language is not supported without advanced audio generation. Please enable advanced audio generation or choose a supported language."
 ERROR_MESSAGE_READING_PDF = "Error reading the PDF file"
-ERROR_MESSAGE_TOO_LONG = "The total content is too long. Please ensure the combined text from PDFs and URL is fewer than {CHARACTER_LIMIT} characters."
+ERROR_MESSAGE_TOO_LONG = f"The total content is too long. Please ensure it's under {CHARACTER_LIMIT} characters."
 
-# Fireworks API-related constants
+# LLM Configuration - Ollama vs Fireworks
+USE_OLLAMA = os.getenv("USE_OLLAMA", "true").lower() == "true"
+
+# Ollama API-related constants
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL", "llama3.3:70b")  # Default model, user can change this
+OLLAMA_MAX_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "16384"))
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
+
+# Fireworks API-related constants (kept as fallback)
 FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
 FIREWORKS_MAX_TOKENS = 16_384
 FIREWORKS_MODEL_ID = "accounts/fireworks/models/llama-v3p3-70b-instruct"
 FIREWORKS_TEMPERATURE = 0.1
+
+# Jina Reader-related constants
+JINA_READER_URL = "https://r.jina.ai/"
+JINA_RETRY_ATTEMPTS = 3
+JINA_RETRY_DELAY = 5  # in seconds
 
 # MeloTTS
 MELO_API_NAME = "/synthesize"
@@ -41,7 +54,6 @@ MELO_TTS_LANGUAGE_MAPPING = {
     "ja": "JP",
     "ko": "KR",
 }
-
 
 # Suno related constants
 SUNO_LANGUAGE_MAPPING = {
@@ -65,98 +77,110 @@ NOT_SUPPORTED_IN_MELO_TTS = list(
     set(SUNO_LANGUAGE_MAPPING.values()) - set(MELO_TTS_LANGUAGE_MAPPING.keys())
 )
 NOT_SUPPORTED_IN_MELO_TTS = [
-    key for key, id in SUNO_LANGUAGE_MAPPING.items() if id in NOT_SUPPORTED_IN_MELO_TTS
+    k for k, v in SUNO_LANGUAGE_MAPPING.items() if v in NOT_SUPPORTED_IN_MELO_TTS
 ]
-
-# Jina Reader-related constants
-JINA_READER_URL = "https://r.jina.ai/"
-JINA_RETRY_ATTEMPTS = 3
-JINA_RETRY_DELAY = 5  # in seconds
 
 # UI-related constants
 UI_DESCRIPTION = """
-Generate Podcasts from PDFs using open-source AI.
+Upload PDF files or enter a URL to convert the content into an engaging podcast dialogue. 
+You can also generate just the transcript without audio if you prefer.
 
-Built with:
-- [Llama 3.3 70B 🦙](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct) via [Fireworks AI 🎆](https://fireworks.ai/) and [Instructor 📐](https://github.com/instructor-ai/instructor) 
-- [MeloTTS 🐚](https://huggingface.co/myshell-ai/MeloTTS-English)
-- [Bark 🐶](https://huggingface.co/suno/bark)
-- [Jina Reader 🔍](https://jina.ai/reader/)
-
-**Note:** Only the text is processed (100k character limits).
+**Note:** This app now supports local LLMs via Ollama! Set USE_OLLAMA=true and configure your model.
 """
-UI_AVAILABLE_LANGUAGES = list(set(SUNO_LANGUAGE_MAPPING.keys()))
+
 UI_INPUTS = {
     "file_upload": {
-        "label": "1. 📄 Upload your PDF(s)",
-        "file_types": [".pdf"],
+        "label": "📁 Upload PDF(s)",
         "file_count": "multiple",
+        "file_types": [".pdf"],
     },
     "url": {
-        "label": "2. 🔗 Paste a URL (optional)",
-        "placeholder": "Enter a URL to include its content",
+        "label": "🌐 Or Enter URL",
+        "placeholder": "https://example.com/article",
     },
     "question": {
-        "label": "3. 🤔 Do you have a specific question or topic in mind?",
-        "placeholder": "Enter a question or topic",
+        "label": "❓ Custom Question (Optional)",
+        "placeholder": "What specific aspect would you like the podcast to focus on?",
     },
     "tone": {
-        "label": "4. 🎭 Choose the tone",
-        "choices": ["Fun", "Formal"],
-        "value": "Fun",
+        "label": "🎭 Tone",
+        "choices": ["Informative", "Casual", "Humorous"],
+        "value": "Informative",
     },
     "length": {
-        "label": "5. ⏱️ Choose the length",
+        "label": "⏱️ Length",
         "choices": ["Short (1-2 min)", "Medium (3-5 min)"],
         "value": "Medium (3-5 min)",
     },
     "language": {
-        "label": "6. 🌐 Choose the language",
-        "choices": UI_AVAILABLE_LANGUAGES,
+        "label": "🌍 Language",
+        "choices": list(SUNO_LANGUAGE_MAPPING.keys()),
         "value": "English",
     },
-    "advanced_audio": {
-        "label": "7. 🔄 Use advanced audio generation? (Experimental)",
-        "value": True,
+    "use_advanced_audio": {
+        "label": "🔊 Advanced Audio Generation (Experimental)",
+        "value": False,
+    },
+    "transcript_only": {
+        "label": "📝 Generate Transcript Only (No Audio)",
+        "value": False,
     },
 }
+
 UI_OUTPUTS = {
-    "audio": {"label": "🔊 Podcast", "format": "mp3"},
+    "audio": {
+        "label": "🎧 Generated Podcast Audio",
+    },
     "transcript": {
-        "label": "📜 Transcript",
+        "label": "📄 Transcript",
     },
 }
-UI_API_NAME = "generate_podcast"
-UI_ALLOW_FLAGGING = "never"
-UI_CONCURRENCY_LIMIT = 1
+
 UI_EXAMPLES = [
     [
-        [str(Path("examples/1310.4546v1.pdf"))],
-        "",
-        "Explain this paper to me like I'm 5 years old",
-        "Fun",
-        "Short (1-2 min)",
-        "English",
-        True,
-    ],
-    [
-        [],
-        "https://en.wikipedia.org/wiki/Hugging_Face",
-        "How did Hugging Face become so successful?",
-        "Fun",
+        None,  # No file upload
+        "https://en.wikipedia.org/wiki/Artificial_intelligence",
+        "What are the key milestones in AI development?",
+        "Casual",
         "Short (1-2 min)",
         "English",
         False,
+        True,  # Transcript only for faster demo
     ],
     [
-        [],
-        "https://simple.wikipedia.org/wiki/Taylor_Swift",
-        "Why is Taylor Swift so popular?",
-        "Fun",
-        "Short (1-2 min)",
+        None,  # No file upload
+        "https://www.python.org/about/",
+        None,  # No custom question
+        "Informative",
+        "Medium (3-5 min)",
         "English",
         False,
+        True,  # Transcript only for faster demo
     ],
 ]
+
+UI_API_NAME = "generate_podcast"
+UI_ALLOW_FLAGGING = "never"
+UI_CONCURRENCY_LIMIT = 3
+UI_SHOW_API = False
 UI_CACHE_EXAMPLES = True
-UI_SHOW_API = True
+
+# Recommended Ollama Models for this use case
+RECOMMENDED_OLLAMA_MODELS = [
+    "llama3.3:70b",      # Best quality if you have enough VRAM
+    "llama3.1:8b",       # Good balance of speed and quality
+    "llama3.2:3b",       # Fastest, lower quality
+    "qwen2.5:14b",       # Alternative high-quality option
+    "mistral:7b",        # Another good alternative
+    "gemma2:9b",         # Google's model
+]
+
+def get_model_recommendations():
+    """Return formatted model recommendations for the user."""
+    return f"""
+Recommended Ollama models for this application:
+{chr(10).join([f"- {model}" for model in RECOMMENDED_OLLAMA_MODELS])}
+
+To install a model: ollama pull <model_name>
+To list your models: ollama list
+"""

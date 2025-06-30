@@ -1,5 +1,5 @@
 """
-main.py
+main.py - Modified to support Ollama and transcript-only generation
 """
 
 # Standard library imports
@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union
 
 # Third-party imports
 import gradio as gr
@@ -40,6 +40,8 @@ from constants import (
     UI_INPUTS,
     UI_OUTPUTS,
     UI_SHOW_API,
+    USE_OLLAMA,
+    get_model_recommendations,
 )
 from prompts import (
     LANGUAGE_MODIFIER,
@@ -48,7 +50,7 @@ from prompts import (
     SYSTEM_PROMPT,
     TONE_MODIFIER,
 )
-from schema import ShortDialogue, MediumDialogue
+from schema import MediumDialogue, ShortDialogue
 from utils import generate_podcast_audio, generate_script, parse_url
 
 
@@ -60,15 +62,17 @@ def generate_podcast(
     length: Optional[str],
     language: str,
     use_advanced_audio: bool,
-) -> Tuple[str, str]:
+    transcript_only: bool = False,
+) -> Tuple[Union[str, None], str]:
     """Generate the audio and transcript from the PDFs and/or URL."""
 
     text = ""
 
     # Choose random number from 0 to 8
-    random_voice_number = random.randint(0, 8) # this is for suno model
+    random_voice_number = random.randint(0, 8)  # this is for suno model
 
-    if not use_advanced_audio and language in NOT_SUPPORTED_IN_MELO_TTS:
+    # Check if advanced audio is needed but not enabled for unsupported languages
+    if not transcript_only and not use_advanced_audio and language in NOT_SUPPORTED_IN_MELO_TTS:
         raise gr.Error(ERROR_MESSAGE_NOT_SUPPORTED_IN_MELO_TTS)
 
     # Check if at least one input is provided
@@ -84,49 +88,70 @@ def generate_podcast(
             try:
                 with Path(file).open("rb") as f:
                     reader = PdfReader(f)
-                    text += "\n\n".join([page.extract_text() for page in reader.pages])
+                    text += "\n\n".join(
+                        page.extract_text() for page in reader.pages if page.extract_text()
+                    )
             except Exception as e:
-                raise gr.Error(f"{ERROR_MESSAGE_READING_PDF}: {str(e)}")
+                logger.error(f"Error reading PDF: {e}")
+                raise gr.Error(f"{ERROR_MESSAGE_READING_PDF}: {e}")
 
     # Process URL if provided
     if url:
         try:
             url_text = parse_url(url)
-            text += "\n\n" + url_text
-        except ValueError as e:
-            raise gr.Error(str(e))
+            text += f"\n\n{url_text}"
+        except Exception as e:
+            logger.error(f"Error parsing URL: {e}")
+            raise gr.Error(f"Error parsing URL: {e}")
 
-    # Check total character count
+    # Check total character limit
     if len(text) > CHARACTER_LIMIT:
         raise gr.Error(ERROR_MESSAGE_TOO_LONG)
 
-    # Modify the system prompt based on the user input
+    # Modify the prompt based on the user inputs
     modified_system_prompt = SYSTEM_PROMPT
 
     if question:
         modified_system_prompt += f"\n\n{QUESTION_MODIFIER} {question}"
+
     if tone:
-        modified_system_prompt += f"\n\n{TONE_MODIFIER} {tone}."
-    if length:
-        modified_system_prompt += f"\n\n{LENGTH_MODIFIERS[length]}"
-    if language:
+        modified_system_prompt += f"\n\n{TONE_MODIFIER[tone]}"
+
+    if language != "English":
         modified_system_prompt += f"\n\n{LANGUAGE_MODIFIER} {language}."
 
-    # Call the LLM
+    # Choose the output model based on the length
     if length == "Short (1-2 min)":
-        llm_output = generate_script(modified_system_prompt, text, ShortDialogue)
+        output_model = ShortDialogue
+        modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Short (1-2 min)']}"
     else:
-        llm_output = generate_script(modified_system_prompt, text, MediumDialogue)
+        output_model = MediumDialogue
+        modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Medium (3-5 min)']}"
 
-    logger.info(f"Generated dialogue: {llm_output}")
+    logger.info(f"Generating podcast with {USE_OLLAMA and 'Ollama' or 'Fireworks'}")
+    logger.info(f"Modified system prompt: {modified_system_prompt}")
 
-    # Process the dialogue
-    audio_segments = []
+    # Generate the dialogue
+    try:
+        llm_output = generate_script(
+            system_prompt=modified_system_prompt,
+            input_text=text,
+            output_model=output_model,
+        )
+        logger.info(f"Generated dialogue: {llm_output}")
+    except Exception as e:
+        logger.error(f"Error generating script: {e}")
+        if USE_OLLAMA:
+            error_msg = f"Error with Ollama model. Please check that your model is running and accessible. Error: {e}"
+        else:
+            error_msg = f"Error generating script: {e}"
+        raise gr.Error(error_msg)
+
+    # Process the dialogue for transcript
     transcript = ""
     total_characters = 0
 
     for line in llm_output.dialogue:
-        logger.info(f"Generating audio for {line.speaker}: {line.text}")
         if line.speaker == "Host (Jane)":
             speaker = f"**Host**: {line.text}"
         else:
@@ -134,94 +159,150 @@ def generate_podcast(
         transcript += speaker + "\n\n"
         total_characters += len(line.text)
 
-        language_for_tts = SUNO_LANGUAGE_MAPPING[language]
+    # Add model info to transcript
+    model_info = f"\n---\n*Generated using {'Ollama' if USE_OLLAMA else 'Fireworks API'}*"
+    transcript += model_info
 
-        if not use_advanced_audio:
-            language_for_tts = MELO_TTS_LANGUAGE_MAPPING[language_for_tts]
+    # If transcript only, return early
+    if transcript_only:
+        logger.info(f"Generated transcript-only with {total_characters} characters")
+        return None, transcript
 
-        # Get audio file path
-        audio_file_path = generate_podcast_audio(
-            line.text, line.speaker, language_for_tts, use_advanced_audio, random_voice_number
+    # Generate audio if not transcript-only
+    audio_segments = []
+    language_for_tts = SUNO_LANGUAGE_MAPPING[language]
+
+    if not use_advanced_audio:
+        language_for_tts = MELO_TTS_LANGUAGE_MAPPING[language_for_tts]
+
+    try:
+        for line in llm_output.dialogue:
+            logger.info(f"Generating audio for {line.speaker}: {line.text}")
+
+            # Get audio file path
+            audio_file_path = generate_podcast_audio(
+                line.text, line.speaker, language_for_tts, use_advanced_audio, random_voice_number
+            )
+            # Read the audio file into an AudioSegment
+            audio_segment = AudioSegment.from_file(audio_file_path)
+            audio_segments.append(audio_segment)
+
+        # Concatenate all audio segments
+        combined_audio = sum(audio_segments)
+
+        # Export the combined audio to a temporary file
+        temporary_directory = GRADIO_CACHE_DIR
+        os.makedirs(temporary_directory, exist_ok=True)
+
+        temporary_file = NamedTemporaryFile(
+            dir=temporary_directory,
+            delete=False,
+            suffix=".mp3",
         )
-        # Read the audio file into an AudioSegment
-        audio_segment = AudioSegment.from_file(audio_file_path)
-        audio_segments.append(audio_segment)
+        combined_audio.export(temporary_file.name, format="mp3")
 
-    # Concatenate all audio segments
-    combined_audio = sum(audio_segments)
+        # Delete any files in the temp directory that end with .mp3 and are over a day old
+        for file in glob.glob(f"{temporary_directory}*.mp3"):
+            if (
+                os.path.isfile(file)
+                and time.time() - os.path.getmtime(file) > GRADIO_CLEAR_CACHE_OLDER_THAN
+            ):
+                os.remove(file)
 
-    # Export the combined audio to a temporary file
-    temporary_directory = GRADIO_CACHE_DIR
-    os.makedirs(temporary_directory, exist_ok=True)
+        logger.info(f"Generated {total_characters} characters of audio")
 
-    temporary_file = NamedTemporaryFile(
-        dir=temporary_directory,
-        delete=False,
-        suffix=".mp3",
+        return temporary_file.name, transcript
+
+    except Exception as e:
+        logger.error(f"Error generating audio: {e}")
+        # If audio generation fails, still return the transcript
+        logger.info("Audio generation failed, returning transcript only")
+        audio_error_msg = ""
+        if "MeloTTS" in str(e):
+            audio_error_msg = "\n\n*Note: MeloTTS service is currently unavailable. Try enabling 'Generate Transcript Only' or 'Advanced Audio Generation'.*"
+        elif "Bark" in str(e):
+            audio_error_msg = "\n\n*Note: Bark audio generation failed. You may need to install additional dependencies or try 'Generate Transcript Only'.*"
+        else:
+            audio_error_msg = f"\n\n*Note: Audio generation failed: {e}*"
+        
+        return None, transcript + audio_error_msg
+
+
+# Create the Gradio interface
+with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
+    
+    gr.Markdown(f"# {APP_TITLE}")
+    
+    # Show configuration status
+    if USE_OLLAMA:
+        gr.Markdown("### 🦙 **Using Local Ollama Model**")
+        gr.Markdown(get_model_recommendations())
+    else:
+        gr.Markdown("### 🎆 **Using Fireworks API**")
+        
+    gr.Markdown(UI_DESCRIPTION)
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            # Input components
+            file_upload = gr.File(**UI_INPUTS["file_upload"])
+            url_input = gr.Textbox(**UI_INPUTS["url"])
+            question_input = gr.Textbox(**UI_INPUTS["question"])
+            
+            with gr.Row():
+                tone_dropdown = gr.Dropdown(**UI_INPUTS["tone"])
+                length_dropdown = gr.Dropdown(**UI_INPUTS["length"])
+            
+            with gr.Row():
+                language_dropdown = gr.Dropdown(**UI_INPUTS["language"])
+                advanced_audio_checkbox = gr.Checkbox(**UI_INPUTS["use_advanced_audio"])
+            
+            transcript_only_checkbox = gr.Checkbox(**UI_INPUTS["transcript_only"])
+            
+            generate_button = gr.Button("🎙️ Generate Podcast", variant="primary", size="lg")
+        
+        with gr.Column(scale=1):
+            # Output components
+            audio_output = gr.Audio(**UI_OUTPUTS["audio"])
+            transcript_output = gr.Markdown(**UI_OUTPUTS["transcript"])
+    
+    # Examples
+    gr.Examples(
+        examples=UI_EXAMPLES,
+        inputs=[
+            file_upload,
+            url_input,
+            question_input,
+            tone_dropdown,
+            length_dropdown,
+            language_dropdown,
+            advanced_audio_checkbox,
+            transcript_only_checkbox,
+        ],
+        outputs=[audio_output, transcript_output],
+        fn=generate_podcast,
+        cache_examples=False,  # Disable caching to avoid file issues
     )
-    combined_audio.export(temporary_file.name, format="mp3")
-
-    # Delete any files in the temp directory that end with .mp3 and are over a day old
-    for file in glob.glob(f"{temporary_directory}*.mp3"):
-        if (
-            os.path.isfile(file)
-            and time.time() - os.path.getmtime(file) > GRADIO_CLEAR_CACHE_OLDER_THAN
-        ):
-            os.remove(file)
-
-    logger.info(f"Generated {total_characters} characters of audio")
-
-    return temporary_file.name, transcript
-
-
-demo = gr.Interface(
-    title=APP_TITLE,
-    description=UI_DESCRIPTION,
-    fn=generate_podcast,
-    inputs=[
-        gr.File(
-            label=UI_INPUTS["file_upload"]["label"],  # Step 1: File upload
-            file_types=UI_INPUTS["file_upload"]["file_types"],
-            file_count=UI_INPUTS["file_upload"]["file_count"],
-        ),
-        gr.Textbox(
-            label=UI_INPUTS["url"]["label"],  # Step 2: URL
-            placeholder=UI_INPUTS["url"]["placeholder"],
-        ),
-        gr.Textbox(label=UI_INPUTS["question"]["label"]),  # Step 3: Question
-        gr.Dropdown(
-            label=UI_INPUTS["tone"]["label"],  # Step 4: Tone
-            choices=UI_INPUTS["tone"]["choices"],
-            value=UI_INPUTS["tone"]["value"],
-        ),
-        gr.Dropdown(
-            label=UI_INPUTS["length"]["label"],  # Step 5: Length
-            choices=UI_INPUTS["length"]["choices"],
-            value=UI_INPUTS["length"]["value"],
-        ),
-        gr.Dropdown(
-            choices=UI_INPUTS["language"]["choices"],  # Step 6: Language
-            value=UI_INPUTS["language"]["value"],
-            label=UI_INPUTS["language"]["label"],
-        ),
-        gr.Checkbox(
-            label=UI_INPUTS["advanced_audio"]["label"],
-            value=UI_INPUTS["advanced_audio"]["value"],
-        ),
-    ],
-    outputs=[
-        gr.Audio(
-            label=UI_OUTPUTS["audio"]["label"], format=UI_OUTPUTS["audio"]["format"]
-        ),
-        gr.Markdown(label=UI_OUTPUTS["transcript"]["label"]),
-    ],
-    allow_flagging=UI_ALLOW_FLAGGING,
-    api_name=UI_API_NAME,
-    theme=gr.themes.Ocean(),
-    concurrency_limit=UI_CONCURRENCY_LIMIT,
-    examples=UI_EXAMPLES,
-    cache_examples=UI_CACHE_EXAMPLES,
-)
+    
+    # Event handler
+    generate_button.click(
+        fn=generate_podcast,
+        inputs=[
+            file_upload,
+            url_input,
+            question_input,
+            tone_dropdown,
+            length_dropdown,
+            language_dropdown,
+            advanced_audio_checkbox,
+            transcript_only_checkbox,
+        ],
+        outputs=[audio_output, transcript_output],
+    )
 
 if __name__ == "__main__":
-    demo.launch(show_api=UI_SHOW_API)
+    demo.launch(
+        show_api=UI_SHOW_API,
+        share=False,
+        inbrowser=True,
+    )
