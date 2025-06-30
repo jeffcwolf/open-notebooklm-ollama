@@ -25,13 +25,13 @@ USE_OLLAMA = os.getenv("USE_OLLAMA", "true").lower() == "true"
 
 # Ollama API-related constants
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL", "llama3.3:70b")  # Default model, user can change this
-OLLAMA_MAX_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "16384"))
+OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model, user can change this
+OLLAMA_MAX_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "32768"))  # INCREASED from 16384 to 32768
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
 
-# Fireworks API-related constants (kept as fallback)
+# Fireworks API-related constants (kept as fallback) 
 FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
-FIREWORKS_MAX_TOKENS = 16_384
+FIREWORKS_MAX_TOKENS = 32_768  # INCREASED from 16_384 to 32_768
 FIREWORKS_MODEL_ID = "accounts/fireworks/models/llama-v3p3-70b-instruct"
 FIREWORKS_TEMPERATURE = 0.1
 
@@ -80,10 +80,22 @@ NOT_SUPPORTED_IN_MELO_TTS = [
     k for k, v in SUNO_LANGUAGE_MAPPING.items() if v in NOT_SUPPORTED_IN_MELO_TTS
 ]
 
+# Import focus areas
+try:
+    from focus_areas import get_focus_names
+    FOCUS_AREA_CHOICES = get_focus_names()
+except ImportError:
+    print("Warning: focus_areas.py not found. Focus selection will not be available.")
+    FOCUS_AREA_CHOICES = ["No Specific Focus"]
+
 # UI-related constants
 UI_DESCRIPTION = """
 Upload PDF files or enter a URL to convert the content into an engaging podcast dialogue. 
 You can also generate just the transcript without audio if you prefer.
+
+**New Features**: 
+- 🎯 **Focus Areas**: Anchor conversations around specific themes and perspectives
+- 🧠 **Deep Discussion**: Enable rigorous, intellectually challenging expert conversations
 
 **Note:** This app now supports local LLMs via Ollama! Set USE_OLLAMA=true and configure your model.
 """
@@ -102,14 +114,20 @@ UI_INPUTS = {
         "label": "❓ Custom Question (Optional)",
         "placeholder": "What specific aspect would you like the podcast to focus on?",
     },
+    "focus_area": {
+        "label": "🎯 Focus Area (Optional)",
+        "choices": FOCUS_AREA_CHOICES,
+        "value": FOCUS_AREA_CHOICES[0] if FOCUS_AREA_CHOICES else "No Specific Focus",
+        "info": "Select a thematic focus to anchor the conversation around specific perspectives or applications."
+    },
     "tone": {
         "label": "🎭 Tone",
-        "choices": ["Informative", "Casual", "Humorous"],
+        "choices": ["Informative", "Casual", "Humorous", "Deep Discussion"],
         "value": "Informative",
     },
     "length": {
         "label": "⏱️ Length",
-        "choices": ["Short (1-2 min)", "Medium (3-5 min)"],
+        "choices": ["Short (1-2 min)", "Medium (3-5 min)", "Long (8-12 min)", "Extended (15+ min)"],
         "value": "Medium (3-5 min)",
     },
     "language": {
@@ -123,7 +141,7 @@ UI_INPUTS = {
     },
     "transcript_only": {
         "label": "📝 Generate Transcript Only (No Audio)",
-        "value": False,
+        "value": True,
     },
 }
 
@@ -136,26 +154,31 @@ UI_OUTPUTS = {
     },
 }
 
+# Updated examples to include focus area
 UI_EXAMPLES = [
     [
         None,  # No file upload
         "https://en.wikipedia.org/wiki/Artificial_intelligence",
         "What are the key milestones in AI development?",
-        "Casual",
-        "Short (1-2 min)",
-        "English",
-        False,
-        True,  # Transcript only for faster demo
+        "AI Ethics and Policy Implications",  # Focus area
+        "Casual",  # Valid choice from tone dropdown
+        "Long (8-12 min)",  # Valid choice from length dropdown
+        "English",  # Valid choice from language dropdown
+        False,  # Valid boolean for advanced audio
+        True,  # Valid boolean for transcript only
+        False,  # Valid boolean for multi-pass
     ],
     [
         None,  # No file upload
         "https://www.python.org/about/",
         None,  # No custom question
-        "Informative",
-        "Medium (3-5 min)",
-        "English",
-        False,
-        True,  # Transcript only for faster demo
+        "Practical Implementation and Applications",  # Focus area
+        "Informative",  # Valid choice from tone dropdown
+        "Extended (15+ min)",  # Valid choice from length dropdown
+        "English",  # Valid choice from language dropdown
+        False,  # Valid boolean for advanced audio
+        True,  # Valid boolean for transcript only
+        True,   # Valid boolean for multi-pass
     ],
 ]
 

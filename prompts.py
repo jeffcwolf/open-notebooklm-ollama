@@ -72,12 +72,36 @@ TONE_MODIFIER = {
     "Informative": "Adopt an informative and educational tone throughout the podcast.",
     "Casual": "Adopt a casual and conversational tone, making the content feel like a friendly chat between the host and guest.",
     "Humorous": "Incorporate light humor and wit throughout the podcast while maintaining respect for the content. Include amusing observations and playful banter.",
+    "Deep Discussion": """Adopt a rigorous, intellectually challenging tone that creates a high-level expert discussion. This is a serious academic conversation between knowledgeable professionals.
+
+CRITICAL DISCUSSION REQUIREMENTS:
+- The host must ask probing, incisive questions that go beyond surface-level content
+- Challenge assumptions and dig deeper into underlying mechanisms, implications, and complexities
+- The guest must provide sophisticated, nuanced answers with specific evidence and reasoning
+- Explore contradictions, limitations, and areas of uncertainty in the field
+- Make connections to broader theoretical frameworks and interdisciplinary perspectives
+- Use precise, academic language while remaining accessible
+- Push back on generalizations and demand specificity
+- Explore "why" and "how" questions extensively, not just "what"
+- Address potential counterarguments and alternative interpretations
+- Examine both practical implications and theoretical significance
+
+CONVERSATION STYLE:
+- Host: Acts like a well-informed interviewer who has done their homework and won't accept superficial answers
+- Guest: Responds as a thoughtful expert who can handle challenging questions and provide depth
+- Both: Engage in intellectual discourse worthy of a graduate seminar or expert panel
+- Include moments where the host pushes for clarification: "But wait, how does that actually work in practice?" or "What evidence supports that claim?"
+- Guest should occasionally acknowledge complexities: "Well, it's more nuanced than that..." or "The research actually shows mixed results..."
+
+Make this feel like a substantive academic conversation where both participants are genuinely engaged in exploring complex ideas."""
 }
 
 # Length modifiers
 LENGTH_MODIFIERS = {
     "Short (1-2 min)": "Keep the dialogue concise and to the point. Aim for approximately 11-17 exchanges between the host and guest.",
     "Medium (3-5 min)": "Allow for a more detailed exploration of the topics. Aim for approximately 18-28 exchanges between the host and guest.",
+    "Long (8-12 min)": "Create an in-depth, comprehensive discussion with detailed explanations. Aim for approximately 35-50 exchanges between the host and guest. Include follow-up questions, examples, and deeper exploration of subtopics.",
+    "Extended (15+ min)": "Generate a thorough, detailed discussion covering all aspects of the topic. Aim for approximately 50-70 exchanges. Include multiple subtopics, detailed explanations, examples, analogies, and comprehensive coverage of the subject matter.",
 }
 
 # Question modifier
@@ -85,3 +109,19 @@ QUESTION_MODIFIER = "The user has provided this specific question or focus area 
 
 # Language modifier
 LANGUAGE_MODIFIER = "Generate the entire dialogue in"
+
+# Focus modifier function
+def get_focus_modifier(focus_area_name: str) -> str:
+    """
+    Get the focus modifier for the given focus area name.
+    This imports the focus areas and returns the appropriate modifier.
+    """
+    try:
+        from focus_areas import FOCUS_AREAS
+        # Find the focus area by name
+        for key, focus_data in FOCUS_AREAS.items():
+            if focus_data["name"] == focus_area_name:
+                return focus_data["prompt_modifier"]
+        return ""  # Return empty string if focus area not found
+    except ImportError:
+        return ""  # Return empty string if focus_areas.py not available

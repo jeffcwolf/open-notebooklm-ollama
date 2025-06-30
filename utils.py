@@ -45,7 +45,8 @@ from constants import (
     JINA_RETRY_ATTEMPTS,
     JINA_RETRY_DELAY,
 )
-from schema import ShortDialogue, MediumDialogue
+# UPDATED IMPORT - Added LongDialogue and ExtendedDialogue
+from schema import ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue
 
 # Initialize clients based on configuration
 if USE_OLLAMA:
@@ -71,27 +72,53 @@ hf_client = None
 bark_models_loaded = False
 
 
+# def generate_script(
+#     system_prompt: str,
+#     input_text: str,
+#     output_model: Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue],
+# ) -> Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue]:
+#     """
+#     Get the dialogue from the LLM.
+
+#     Args:
+#         system_prompt (str): The system prompt to guide the LLM.
+#         input_text (str): The input text to process.
+#         output_model (Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue]): The desired output model.
+
+#     Returns:
+#         Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue]: The generated dialogue.
+#     """
+
+#     # Call the LLM for the first time
+#     first_draft_dialogue = call_llm(system_prompt, input_text, output_model)
+
+#     # Call the LLM a second time to improve the dialogue
+#     system_prompt_with_dialogue = f"{system_prompt}\n\nHere is the first draft of the dialogue you provided:\n\n{first_draft_dialogue.model_dump_json()}."
+#     final_dialogue = call_llm(system_prompt_with_dialogue, "Please improve the dialogue. Make it more natural and engaging.", output_model)
+
+#     return final_dialogue
+
 def generate_script(
     system_prompt: str,
     input_text: str,
-    output_model: Union[ShortDialogue, MediumDialogue],
-) -> Union[ShortDialogue, MediumDialogue]:
+    output_model: Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue],
+) -> Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue]:
     """
     Get the dialogue from the LLM.
-
-    Args:
-        system_prompt (str): The system prompt to guide the LLM.
-        input_text (str): The input text to process.
-        output_model (Union[ShortDialogue, MediumDialogue]): The desired output model.
-
-    Returns:
-        Union[ShortDialogue, MediumDialogue]: The generated dialogue.
+    For long content, skip the second improvement pass to avoid context overflow.
     """
 
     # Call the LLM for the first time
     first_draft_dialogue = call_llm(system_prompt, input_text, output_model)
+    
+    # Skip second pass for long content to avoid context overflow
+    if output_model in [LongDialogue, ExtendedDialogue]:
+        print(f"✅ Skipping second pass for {output_model.__name__} to avoid context overflow")
+        print(f"✅ Generated {len(first_draft_dialogue.dialogue)} exchanges in first pass")
+        return first_draft_dialogue
 
-    # Call the LLM a second time to improve the dialogue
+    # Call the LLM a second time to improve the dialogue (only for short/medium)
+    print("Doing second improvement pass for short/medium content...")
     system_prompt_with_dialogue = f"{system_prompt}\n\nHere is the first draft of the dialogue you provided:\n\n{first_draft_dialogue.model_dump_json()}."
     final_dialogue = call_llm(system_prompt_with_dialogue, "Please improve the dialogue. Make it more natural and engaging.", output_model)
 
@@ -255,47 +282,30 @@ def call_llm_alternative(system_prompt: str, text: str, dialogue_format: Any) ->
 
 def call_llm_fallback(system_prompt: str, text: str, dialogue_format: Any) -> Any:
     """
-    Fallback method for Ollama when structured output fails.
-    Uses manual JSON parsing with schema instructions.
+    Enhanced fallback method for Ollama when structured output fails.
+    Uses manual JSON parsing with strong length emphasis and better JSON handling.
     """
     
-    # Get the schema as a string for the prompt
-    schema_example = get_schema_example(dialogue_format)
+    # Determine expected length based on dialogue format
+    expected_exchanges = "18-28"  # default for Medium
+    length_emphasis = ""
     
-    # Much more forceful prompt that demands JSON
-    enhanced_system_prompt = f"""{system_prompt}
-
-🚨 CRITICAL INSTRUCTIONS - YOU MUST FOLLOW THESE EXACTLY 🚨
-
-1. DO NOT write explanatory text, summaries, or helpful responses
-2. DO NOT preserve the input format or create metadata structures
-3. DO NOT ask questions or offer to help
-4. You MUST create a podcast dialogue between Host (Jane) and Guest
-5. You MUST respond with ONLY this exact JSON format:
-
-{{
-  "scratchpad": "Brief notes about transforming this content into an engaging podcast",
-  "name_of_guest": "Dr. [Guest Name]",
-  "dialogue": [
-    {{"speaker": "Host (Jane)", "text": "Welcome to our podcast! [intro about the topic]"}},
-    {{"speaker": "Guest", "text": "[guest response about the topic]"}},
-    {{"speaker": "Host (Jane)", "text": "[follow-up question]"}},
-    {{"speaker": "Guest", "text": "[detailed response]"}}
-  ]
-}}
-
-CRITICAL SPEAKER RULES:
-- Use EXACTLY "Host (Jane)" for the host speaker
-- Use EXACTLY "Guest" for the guest speaker (never use the guest's actual name as speaker)
-- The guest's actual name goes in the "name_of_guest" field only
-
-FORMAT REQUIREMENT:
-- Your response must start with {{ and end with }}
-- No markdown, no explanations, no additional text, no metadata preservation
-- ONLY the JSON object with scratchpad, name_of_guest, and dialogue fields
-
-TASK: Transform the provided content into a podcast dialogue format. Ignore the input format completely and create a fresh conversation."""
-
+    if dialogue_format == ShortDialogue:
+        expected_exchanges = "11-17"
+        length_emphasis = "SHORT FORMAT: Create a concise dialogue with 11-17 total exchanges."
+    elif dialogue_format == MediumDialogue:
+        expected_exchanges = "18-28"
+        length_emphasis = "MEDIUM FORMAT: Create a dialogue with 18-28 total exchanges."
+    elif dialogue_format == LongDialogue:
+        expected_exchanges = "35-50"
+        length_emphasis = "LONG FORMAT: Create an extensive dialogue with 35-50 total exchanges. This should be a comprehensive, in-depth discussion with detailed explanations, follow-up questions, and exploration of subtopics."
+    elif dialogue_format == ExtendedDialogue:
+        expected_exchanges = "50-70"
+        length_emphasis = "EXTENDED FORMAT: Create a very long, thorough dialogue with 50-70 total exchanges. Include multiple subtopics, detailed explanations, examples, analogies, and comprehensive coverage."
+    
+    # Get the schema example for the format
+    schema_example = get_enhanced_schema_example(dialogue_format, expected_exchanges)
+    
     # Make regular completion call
     client = OpenAI(
         base_url=OLLAMA_BASE_URL,
@@ -303,123 +313,335 @@ TASK: Transform the provided content into a podcast dialogue format. Ignore the 
     )
     
     # Try multiple approaches if needed
-    for attempt in range(2):
+    for attempt in range(3):  # 3 attempts
         try:
-            if attempt == 0:
-                # First attempt with clear JSON instruction and content emphasis
-                messages = [
-                    {"role": "system", "content": enhanced_system_prompt},
-                    {"role": "user", "content": f"""Create a detailed podcast dialogue using the specific facts and information from this content.
-
-IMPORTANT: Use actual details, names, dates, and facts from the content below. Don't be generic.
-
-Content: {text[:5000]}
-
-Create a podcast dialogue that discusses the specific details from this content. Make the guest knowledgeable about the actual facts presented."""}
-                ]
+            # Adjust max_tokens based on expected length to avoid truncation
+            if dialogue_format == LongDialogue:
+                max_tokens = min(OLLAMA_MAX_TOKENS, 20000)  # Increase for long content
+            elif dialogue_format == ExtendedDialogue:
+                max_tokens = min(OLLAMA_MAX_TOKENS, 25000)  # Even more for extended
             else:
-                # Second attempt with even more explicit instruction  
-                messages = [
-                    {"role": "system", "content": "You are a JSON-only response bot. You ONLY output valid JSON. Never write explanatory text."},
-                    {"role": "user", "content": f"""Create a detailed podcast dialogue in JSON format using specific facts from the content.
+                max_tokens = OLLAMA_MAX_TOKENS
+            
+            if attempt == 0:
+                # First attempt: Very explicit structure with step-by-step guidance
+                enhanced_system_prompt = f"""{system_prompt}
 
-JSON Format:
+🚨 CRITICAL LENGTH REQUIREMENT 🚨
+{length_emphasis}
+
+STEP-BY-STEP INSTRUCTIONS:
+1. Read the provided content carefully
+2. Create a {expected_exchanges}-exchange dialogue about the content
+3. Format it as valid JSON with the exact structure shown below
+4. Count exchanges as you write - each speaker turn = 1 exchange
+5. Do not stop until you reach {expected_exchanges} exchanges
+
+REQUIRED JSON FORMAT (respond with ONLY this structure):
 {{
-  "scratchpad": "Notes about key facts to discuss from the content",
-  "name_of_guest": "Dr. [Expert Name]",
+  "scratchpad": "Brief notes about the content and how to make it engaging",
+  "name_of_guest": "Dr. [Expert Name based on content]",
   "dialogue": [
-    {{"speaker": "Host (Jane)", "text": "Welcome! Today we're discussing [specific topic from content]"}},
-    {{"speaker": "Guest", "text": "Thanks! Let me share some fascinating details about [specific facts from content]"}},
-    {{"speaker": "Host (Jane)", "text": "That's interesting! Can you tell us about [specific detail from content]?"}},
-    {{"speaker": "Guest", "text": "[Detailed response using actual facts from content]"}}
+    {{"speaker": "Host (Jane)", "text": "Welcome to our podcast! Today we're exploring [topic from content]..."}},
+    {{"speaker": "Guest", "text": "Thank you for having me. [Initial response based on content]..."}},
+    {{"speaker": "Host (Jane)", "text": "[Follow-up question based on content]..."}},
+    {{"speaker": "Guest", "text": "[Detailed response using content facts]..."}}
+    // CONTINUE THIS PATTERN until you have exactly {expected_exchanges} total exchanges
+    // Keep going! Don't stop early!
   ]
 }}
 
-Content to use: {text[:3000]}
+CRITICAL: Use EXACTLY "Host (Jane)" and "Guest" as speakers."""
 
-Use specific details, not generic responses. Respond with ONLY the JSON object."""}
+                messages = [
+                    {"role": "system", "content": enhanced_system_prompt},
+                    {"role": "user", "content": f"""Create a {expected_exchanges}-exchange podcast dialogue using specific facts from this content.
+
+CONTENT TO DISCUSS: {text[:6000]}
+
+REMINDER: Generate exactly {expected_exchanges} exchanges. Count them as you create the dialogue array!"""}
                 ]
+                
+            elif attempt == 1:
+                # Second attempt: More structured approach with explicit counting
+                messages = [
+                    {"role": "system", "content": f"""You are a podcast dialogue generator. You MUST create exactly {expected_exchanges} exchanges.
+
+CRITICAL RULES:
+1. Only output valid JSON
+2. Use exactly {expected_exchanges} dialogue exchanges
+3. Each speaker turn counts as 1 exchange
+4. Use "Host (Jane)" and "Guest" as speakers
+5. Base content on the provided text
+
+{length_emphasis}"""},
+                    {"role": "user", "content": f"""Generate a {expected_exchanges}-exchange podcast dialogue in this JSON format:
+
+{{
+  "scratchpad": "Notes about key points to cover",
+  "name_of_guest": "Expert Name",
+  "dialogue": [
+    // Create exactly {expected_exchanges} exchanges here
+    // Example: {{"speaker": "Host (Jane)", "text": "question"}}, 
+    // Example: {{"speaker": "Guest", "text": "answer"}},
+    // Continue until {expected_exchanges} total
+  ]
+}}
+
+Content: {text[:4000]}
+
+CRITICAL: Generate ALL {expected_exchanges} exchanges. Do not truncate!"""}
+                ]
+                
+            else:
+                # Third attempt: Simplified structure focusing on completion
+                messages = [
+                    {"role": "system", "content": f"Generate {expected_exchanges} podcast exchanges. Output only JSON. Never stop early."},
+                    {"role": "user", "content": f"""Create {expected_exchanges} exchanges about: {text[:3000]}
+
+JSON format:
+{{
+  "scratchpad": "notes",
+  "name_of_guest": "expert name", 
+  "dialogue": [
+    // {expected_exchanges} total exchanges here
+  ]
+}}"""}
+                ]
+            
+            print(f"Attempt {attempt + 1}: Requesting {expected_exchanges} exchanges with max_tokens={max_tokens}")
             
             response = client.chat.completions.create(
                 messages=messages,
                 model=OLLAMA_MODEL_ID,
-                max_tokens=OLLAMA_MAX_TOKENS,
+                max_tokens=max_tokens,  # Use adjusted token limit
                 temperature=OLLAMA_TEMPERATURE,
             )
             
-            # Parse the JSON response
+            # Get the full response content
             json_text = response.choices[0].message.content.strip()
+            print(f"Raw response length: {len(json_text)} characters")
             
-            # Remove any markdown formatting if present
-            if json_text.startswith("```json"):
-                json_text = json_text[7:]
-            if json_text.endswith("```"):
-                json_text = json_text[:-3]
+            # More robust JSON extraction
+            json_text = extract_json_from_response(json_text)
             
-            # Remove any leading/trailing text that isn't JSON
-            if '{' in json_text and '}' in json_text:
-                start = json_text.find('{')
-                end = json_text.rfind('}') + 1
-                json_text = json_text[start:end]
-            
-            json_data = json.loads(json_text)
-            
-            # Handle nested podcast dialogue structure
-            if "podcast_dialogue" in json_data:
-                # Model created nested structure, extract the dialogue part
-                podcast_part = json_data["podcast_dialogue"]
-                if isinstance(podcast_part, dict):
-                    # If it's already in the right format
-                    json_data = podcast_part
-                elif isinstance(podcast_part, list):
-                    # If it's just a dialogue array, create the full structure
-                    json_data = {
-                        "scratchpad": f"Podcast about {json_data.get('title', 'the provided content')}",
-                        "name_of_guest": "Expert Guest",
-                        "dialogue": podcast_part
-                    }
-            
-            # Ensure all required fields exist
-            if "scratchpad" not in json_data:
-                json_data["scratchpad"] = "Brainstorming notes about the content"
-            if "name_of_guest" not in json_data:
-                json_data["name_of_guest"] = "Expert Guest"
-            if "dialogue" not in json_data:
-                # Try to find dialogue in various possible locations
-                if "podcast_dialogue" in json_data and isinstance(json_data["podcast_dialogue"], list):
-                    json_data["dialogue"] = json_data["podcast_dialogue"]
-                else:
-                    # Create minimal dialogue if none found
-                    json_data["dialogue"] = [
-                        {"speaker": "Host (Jane)", "text": "Welcome to today's podcast!"},
-                        {"speaker": "Guest", "text": "Thank you for having me."}
-                    ]
-            
-            # Fix speaker names if they're incorrect
-            if "dialogue" in json_data:
-                for item in json_data["dialogue"]:
-                    if item["speaker"] not in ["Host (Jane)", "Guest"]:
-                        # If it's not the host, it must be the guest
-                        if "Jane" not in item["speaker"] and "Host" not in item["speaker"]:
-                            item["speaker"] = "Guest"
-                        elif "Host" in item["speaker"] or "Jane" in item["speaker"]:
-                            item["speaker"] = "Host (Jane)"
-            
-            return dialogue_format.parse_obj(json_data)
-            
-        except json.JSONDecodeError as e:
-            if attempt == 0:
-                print(f"JSON parsing failed on attempt {attempt + 1}, trying more explicit approach...")
+            if not json_text:
+                print(f"No valid JSON found in response on attempt {attempt + 1}")
                 continue
+            
+            try:
+                json_data = json.loads(json_text)
+            except json.JSONDecodeError as json_error:
+                print(f"JSON decode error on attempt {attempt + 1}: {json_error}")
+                print(f"Problematic JSON (first 500 chars): {json_text[:500]}")
+                
+                # Try to fix common JSON issues
+                json_text = fix_common_json_issues(json_text)
+                try:
+                    json_data = json.loads(json_text)
+                    print("Fixed JSON issues successfully")
+                except json.JSONDecodeError:
+                    print("Could not fix JSON issues")
+                    if attempt == 2:
+                        raise
+                    continue
+            
+            # Validate and fix the parsed data
+            json_data = validate_and_fix_dialogue_data(json_data)
+            
+            # Check if we got the expected length
+            dialogue_length = len(json_data.get("dialogue", []))
+            print(f"Parsed {dialogue_length} exchanges on attempt {attempt + 1}")
+            
+            # For longer formats, be more strict about length
+            expected_min = int(expected_exchanges.split('-')[0])
+            if dialogue_format in [LongDialogue, ExtendedDialogue]:
+                acceptance_threshold = 0.8  # 80% of minimum for long formats
             else:
-                print(f"All JSON parsing attempts failed. Raw response: {response.choices[0].message.content}")
-                raise Exception(f"Failed to get valid JSON after multiple attempts. Last error: {e}")
+                acceptance_threshold = 0.7  # 70% for shorter formats
+            
+            if dialogue_length >= expected_min * acceptance_threshold or attempt == 2:
+                try:
+                    return dialogue_format.parse_obj(json_data)
+                except Exception as parse_error:
+                    print(f"Pydantic parsing error: {parse_error}")
+                    if attempt == 2:
+                        raise
+                    continue
+            else:
+                print(f"Length {dialogue_length} too short (need ≥{expected_min * acceptance_threshold:.0f}), trying again...")
+                continue
+            
         except Exception as e:
-            if attempt == 0:
-                print(f"Attempt {attempt + 1} failed: {e}, trying again...")
-                continue
-            else:
-                raise Exception(f"Failed to parse LLM response as JSON: {e}\nResponse: {response.choices[0].message.content}")
+            print(f"Attempt {attempt + 1} failed with error: {e}")
+            if attempt == 2:
+                raise Exception(f"All attempts failed. Last error: {e}")
+            continue
+
+
+def extract_json_from_response(response_text: str) -> str:
+    """Extract JSON from response text, handling various formats."""
+    
+    # Remove markdown formatting
+    if response_text.startswith("```json"):
+        response_text = response_text[7:]
+    if response_text.startswith("```"):
+        response_text = response_text[3:]
+    if response_text.endswith("```"):
+        response_text = response_text[:-3]
+    
+    # Find JSON boundaries
+    start_idx = response_text.find('{')
+    if start_idx == -1:
+        return ""
+    
+    # Find the matching closing brace
+    brace_count = 0
+    end_idx = -1
+    for i in range(start_idx, len(response_text)):
+        if response_text[i] == '{':
+            brace_count += 1
+        elif response_text[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                end_idx = i + 1
+                break
+    
+    if end_idx == -1:
+        # If we can't find matching braces, try rfind
+        end_idx = response_text.rfind('}') + 1
+        if end_idx == 0:
+            return ""
+    
+    return response_text[start_idx:end_idx].strip()
+
+
+def fix_common_json_issues(json_text: str) -> str:
+    """Fix common JSON formatting issues."""
+    
+    # Remove trailing commas before closing brackets/braces
+    import re
+    json_text = re.sub(r',(\s*[}\]])', r'\1', json_text)
+    
+    # Fix unescaped quotes in text
+    # This is a simple fix - for production, you'd want more sophisticated handling
+    lines = json_text.split('\n')
+    fixed_lines = []
+    for line in lines:
+        if '"text":' in line and line.count('"') > 2:
+            # Try to fix unescaped quotes in dialogue text
+            if line.strip().endswith(','):
+                # Extract the text part and escape internal quotes
+                start = line.find('"text": "') + 9
+                end = line.rfind('"')
+                if start < end:
+                    text_part = line[start:end]
+                    escaped_text = text_part.replace('"', '\\"')
+                    line = line[:start] + escaped_text + line[end:]
+        fixed_lines.append(line)
+    
+    return '\n'.join(fixed_lines)
+
+
+def validate_and_fix_dialogue_data(json_data: dict) -> dict:
+    """Validate and fix dialogue data structure."""
+    
+    # Ensure required fields exist
+    if "scratchpad" not in json_data:
+        json_data["scratchpad"] = "Brainstorming notes about the content"
+    if "name_of_guest" not in json_data:
+        json_data["name_of_guest"] = "Expert Guest"
+    if "dialogue" not in json_data:
+        json_data["dialogue"] = [
+            {"speaker": "Host (Jane)", "text": "Welcome to today's podcast!"},
+            {"speaker": "Guest", "text": "Thank you for having me."}
+        ]
+    
+    # Fix speaker names if they're incorrect
+    if "dialogue" in json_data and isinstance(json_data["dialogue"], list):
+        for item in json_data["dialogue"]:
+            if isinstance(item, dict) and "speaker" in item:
+                if item["speaker"] not in ["Host (Jane)", "Guest"]:
+                    if "Jane" in item["speaker"] or "Host" in item["speaker"]:
+                        item["speaker"] = "Host (Jane)"
+                    else:
+                        item["speaker"] = "Guest"
+                
+                # Ensure text field exists and is a string
+                if "text" not in item or not isinstance(item["text"], str):
+                    item["text"] = "..."
+    
+    return json_data
+
+
+def get_enhanced_schema_example(dialogue_format: Any, expected_exchanges: str) -> str:
+    """Generate an enhanced schema example showing the expected length."""
+    
+    if dialogue_format == LongDialogue:
+        return """{
+  "scratchpad": "Detailed brainstorming notes about transforming this content into a comprehensive 35-50 exchange podcast discussion",
+  "name_of_guest": "Dr. Expert Name",
+  "dialogue": [
+    {"speaker": "Host (Jane)", "text": "Welcome to our podcast! Today we're diving deep into..."},
+    {"speaker": "Guest", "text": "Thank you for having me. I'm excited to explore..."},
+    {"speaker": "Host (Jane)", "text": "Let's start with the fundamentals..."},
+    {"speaker": "Guest", "text": "Absolutely. To understand this topic..."},
+    // Continue with detailed back-and-forth until you reach 35-50 total exchanges
+    // Include follow-up questions, examples, and deeper exploration
+  ]
+}"""
+    elif dialogue_format == ExtendedDialogue:
+        return """{
+  "scratchpad": "Comprehensive brainstorming notes for a thorough 50-70 exchange podcast covering all aspects",
+  "name_of_guest": "Dr. Expert Name", 
+  "dialogue": [
+    {"speaker": "Host (Jane)", "text": "Welcome to our extended podcast episode..."},
+    {"speaker": "Guest", "text": "Thank you. This is such a rich topic..."},
+    {"speaker": "Host (Jane)", "text": "Let's begin with the historical context..."},
+    {"speaker": "Guest", "text": "Great starting point. Historically..."},
+    // Continue with very detailed discussion until 50-70 total exchanges
+    // Include multiple subtopics, examples, analogies, comprehensive coverage
+  ]
+}"""
+    else:
+        return get_schema_example(dialogue_format)
+
+
+def get_length_example_structure(dialogue_format: Any) -> str:
+    """Get an example structure showing the expected length pattern."""
+    
+    if dialogue_format == LongDialogue:
+        return """Expected structure (35-50 exchanges):
+1. Host (Jane): Introduction and topic overview
+2. Guest: Initial response and expertise
+3. Host (Jane): First detailed question
+4. Guest: Comprehensive answer
+5. Host (Jane): Follow-up question
+6. Guest: Detailed explanation
+... continue this pattern with:
+- Multiple subtopics
+- Follow-up questions  
+- Examples and analogies
+- Deeper exploration
+... until you reach 35-50 total exchanges"""
+    elif dialogue_format == ExtendedDialogue:
+        return """Expected structure (50-70 exchanges):
+1. Host (Jane): Extended introduction
+2. Guest: Detailed opening
+3. Host (Jane): First major topic
+4. Guest: Comprehensive explanation
+5. Host (Jane): Clarifying question
+6. Guest: Further detail
+... continue with extensive coverage:
+- Historical background
+- Current developments  
+- Multiple subtopics
+- Detailed examples
+- Comparative analysis
+- Future implications
+... until you reach 50-70 total exchanges"""
+    else:
+        return "Standard dialogue structure"
 
 
 def get_schema_example(dialogue_format: Any) -> str:

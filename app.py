@@ -1,5 +1,5 @@
 """
-main.py - Modified to support Ollama and transcript-only generation
+main.py - Modified to support Ollama and transcript-only generation with focus areas
 """
 
 # Standard library imports
@@ -49,20 +49,50 @@ from prompts import (
     QUESTION_MODIFIER,
     SYSTEM_PROMPT,
     TONE_MODIFIER,
+    get_focus_modifier,  # NEW: Import focus modifier function
 )
-from schema import MediumDialogue, ShortDialogue
+from schema import MediumDialogue, ShortDialogue, LongDialogue, ExtendedDialogue
 from utils import generate_podcast_audio, generate_script, parse_url
+
+# Debug: Print available length modifiers at startup
+print("🔧 Available length modifiers:")
+for key, value in LENGTH_MODIFIERS.items():
+    print(f"  '{key}': {value[:50]}...")
+
+# Import multi-pass generator if available
+try:
+    import sys
+    sys.path.append('.')
+    from multi_pass_generator import generate_long_transcript, estimate_page_count
+    MULTI_PASS_AVAILABLE = True
+    print("✅ Multi-pass generator available")
+except ImportError:
+    MULTI_PASS_AVAILABLE = False
+    print("⚠️ Multi-pass generator not available")
+
+# Import focus areas if available
+try:
+    from focus_areas import FOCUS_AREAS, get_focus_names
+    print("✅ Focus areas available:")
+    for focus_name in get_focus_names():
+        print(f"  - {focus_name}")
+    FOCUS_AVAILABLE = True
+except ImportError:
+    print("⚠️ Focus areas not available")
+    FOCUS_AVAILABLE = False
 
 
 def generate_podcast(
     files: List[str],
     url: Optional[str],
     question: Optional[str],
+    focus_area: Optional[str],  # NEW: Focus area parameter
     tone: Optional[str],
     length: Optional[str],
     language: str,
     use_advanced_audio: bool,
     transcript_only: bool = False,
+    multi_pass: bool = False,
 ) -> Tuple[Union[str, None], str]:
     """Generate the audio and transcript from the PDFs and/or URL."""
 
@@ -114,6 +144,13 @@ def generate_podcast(
     if question:
         modified_system_prompt += f"\n\n{QUESTION_MODIFIER} {question}"
 
+    # NEW: Add focus area modifier if specified
+    if focus_area and focus_area != "No Specific Focus":
+        focus_modifier = get_focus_modifier(focus_area)
+        if focus_modifier:
+            modified_system_prompt += f"\n\n{focus_modifier}"
+            logger.info(f"Applied focus area: {focus_area}")
+
     if tone:
         modified_system_prompt += f"\n\n{TONE_MODIFIER[tone]}"
 
@@ -124,11 +161,23 @@ def generate_podcast(
     if length == "Short (1-2 min)":
         output_model = ShortDialogue
         modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Short (1-2 min)']}"
+    elif length == "Medium (3-5 min)":
+        output_model = MediumDialogue
+        modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Medium (3-5 min)']}"
+    elif length == "Long (8-12 min)":
+        output_model = LongDialogue
+        modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Long (8-12 min)']}"
+    elif length == "Extended (15+ min)":
+        output_model = ExtendedDialogue
+        modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Extended (15+ min)']}"
     else:
+        # Fallback to medium if somehow an invalid length is passed
         output_model = MediumDialogue
         modified_system_prompt += f"\n\n{LENGTH_MODIFIERS['Medium (3-5 min)']}"
 
     logger.info(f"Generating podcast with {USE_OLLAMA and 'Ollama' or 'Fireworks'}")
+    logger.info(f"Using length: {length} with model: {output_model.__name__}")
+    logger.info(f"Focus area: {focus_area}")  # NEW: Log focus area
     logger.info(f"Modified system prompt: {modified_system_prompt}")
 
     # Generate the dialogue
@@ -159,13 +208,14 @@ def generate_podcast(
         transcript += speaker + "\n\n"
         total_characters += len(line.text)
 
-    # Add model info to transcript
-    model_info = f"\n---\n*Generated using {'Ollama' if USE_OLLAMA else 'Fireworks API'}*"
+    # Add model info to transcript - NEW: Include focus area info
+    focus_info = f" - Focus: {focus_area}" if focus_area and focus_area != "No Specific Focus" else ""
+    model_info = f"\n---\n*Generated using {'Ollama' if USE_OLLAMA else 'Fireworks API'} - Length: {length} ({len(llm_output.dialogue)} exchanges){focus_info}*"
     transcript += model_info
 
     # If transcript only, return early
     if transcript_only:
-        logger.info(f"Generated transcript-only with {total_characters} characters")
+        logger.info(f"Generated transcript-only with {total_characters} characters and {len(llm_output.dialogue)} exchanges")
         return None, transcript
 
     # Generate audio if not transcript-only
@@ -209,7 +259,7 @@ def generate_podcast(
             ):
                 os.remove(file)
 
-        logger.info(f"Generated {total_characters} characters of audio")
+        logger.info(f"Generated {total_characters} characters of audio with {len(llm_output.dialogue)} exchanges")
 
         return temporary_file.name, transcript
 
@@ -249,6 +299,9 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             url_input = gr.Textbox(**UI_INPUTS["url"])
             question_input = gr.Textbox(**UI_INPUTS["question"])
             
+            # NEW: Add focus area dropdown
+            focus_area_dropdown = gr.Dropdown(**UI_INPUTS["focus_area"])
+            
             with gr.Row():
                 tone_dropdown = gr.Dropdown(**UI_INPUTS["tone"])
                 length_dropdown = gr.Dropdown(**UI_INPUTS["length"])
@@ -259,6 +312,13 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             
             transcript_only_checkbox = gr.Checkbox(**UI_INPUTS["transcript_only"])
             
+            # Add multi-pass option for very long transcripts
+            multi_pass_checkbox = gr.Checkbox(
+                label="📚 Multi-Pass Generation (for 5+ page transcripts)",
+                value=False,
+                info="Generate very long transcripts by processing content in sections"
+            )
+            
             generate_button = gr.Button("🎙️ Generate Podcast", variant="primary", size="lg")
         
         with gr.Column(scale=1):
@@ -266,36 +326,40 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             audio_output = gr.Audio(**UI_OUTPUTS["audio"])
             transcript_output = gr.Markdown(**UI_OUTPUTS["transcript"])
     
-    # Examples
+    # Examples - UPDATED: Include focus area in examples
     gr.Examples(
         examples=UI_EXAMPLES,
         inputs=[
             file_upload,
             url_input,
             question_input,
+            focus_area_dropdown,  # NEW: Include focus area in examples
             tone_dropdown,
             length_dropdown,
             language_dropdown,
             advanced_audio_checkbox,
             transcript_only_checkbox,
+            multi_pass_checkbox,
         ],
         outputs=[audio_output, transcript_output],
         fn=generate_podcast,
         cache_examples=False,  # Disable caching to avoid file issues
     )
     
-    # Event handler
+    # Event handler - UPDATED: Include focus area parameter
     generate_button.click(
         fn=generate_podcast,
         inputs=[
             file_upload,
             url_input,
             question_input,
+            focus_area_dropdown,  # NEW: Include focus area in inputs
             tone_dropdown,
             length_dropdown,
             language_dropdown,
             advanced_audio_checkbox,
             transcript_only_checkbox,
+            multi_pass_checkbox,
         ],
         outputs=[audio_output, transcript_output],
     )
