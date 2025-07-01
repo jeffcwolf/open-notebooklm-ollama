@@ -46,7 +46,23 @@ from constants import (
     JINA_RETRY_DELAY,
 )
 # UPDATED IMPORT - Added LongDialogue and ExtendedDialogue
-from schema import ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue
+from schema import ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue, DialogueItem
+
+# Import Multi-stage Extended functions
+print("🔍 Attempting to import multi_stage_extended...")
+try:
+    from multi_stage_extended import generate_extended_multi_stage, enhance_for_deep_discussion
+    print("✅ Import successful")
+    MULTI_STAGE_AVAILABLE = True
+    print("✅ Multi-stage Extended generator available")
+except ImportError as e:
+    print(f"❌ Import failed: {e}")
+    MULTI_STAGE_AVAILABLE = False
+    print("⚠️ Multi-stage Extended generator not available")
+except Exception as e:
+    print(f"❌ Unexpected error during import: {e}")
+    MULTI_STAGE_AVAILABLE = False
+    print("⚠️ Multi-stage Extended generator not available")
 
 # Initialize clients based on configuration
 if USE_OLLAMA:
@@ -98,32 +114,197 @@ bark_models_loaded = False
 
 #     return final_dialogue
 
+# def generate_script(
+#     system_prompt: str,
+#     input_text: str,
+#     output_model: Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue],
+# ) -> Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue]:
+#     """
+#     Get the dialogue from the LLM.
+#     For long content, skip the second improvement pass to avoid context overflow.
+#     """
+
+#     # Call the LLM for the first time
+#     first_draft_dialogue = call_llm(system_prompt, input_text, output_model)
+    
+#     # Skip second pass for long content to avoid context overflow
+#     if output_model in [LongDialogue, ExtendedDialogue]:
+#         print(f"✅ Skipping second pass for {output_model.__name__} to avoid context overflow")
+#         print(f"✅ Generated {len(first_draft_dialogue.dialogue)} exchanges in first pass")
+#         return first_draft_dialogue
+
+#     # Call the LLM a second time to improve the dialogue (only for short/medium)
+#     print("Doing second improvement pass for short/medium content...")
+#     system_prompt_with_dialogue = f"{system_prompt}\n\nHere is the first draft of the dialogue you provided:\n\n{first_draft_dialogue.model_dump_json()}."
+#     final_dialogue = call_llm(system_prompt_with_dialogue, "Please improve the dialogue. Make it more natural and engaging.", output_model)
+
+#     return final_dialogue
+
+
 def generate_script(
     system_prompt: str,
     input_text: str,
     output_model: Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue],
 ) -> Union[ShortDialogue, MediumDialogue, LongDialogue, ExtendedDialogue]:
     """
-    Get the dialogue from the LLM.
-    For long content, skip the second improvement pass to avoid context overflow.
+    Generate script with multi-stage approach for Extended dialogues.
     """
-
-    # Call the LLM for the first time
+    
+    # Special handling for Extended dialogues using multi-stage approach
+    if output_model == ExtendedDialogue and MULTI_STAGE_AVAILABLE:
+        print("🎭 Using Multi-Stage approach for Extended dialogue...")
+        
+        # Check if this is Deep Discussion mode
+        is_deep_discussion = "Deep Discussion" in system_prompt and "substantive academic conversation" in system_prompt
+        
+        # Enhance system prompt for Deep Discussion if needed
+        enhanced_system_prompt = system_prompt
+        if is_deep_discussion:
+            enhanced_system_prompt = enhance_for_deep_discussion(system_prompt, 0)
+            print("🧠 Deep Discussion mode detected - enhancing prompts")
+        
+        try:
+            # Generate multi-stage conversation
+            multi_result = generate_extended_multi_stage(
+                original_content=input_text,
+                system_prompt=enhanced_system_prompt,
+                call_llm_func=call_llm,
+                focus_area=extract_focus_area_from_prompt(system_prompt)  # Helper function
+            )
+            
+            if multi_result["success"]:
+                print(f"✅ Multi-stage Extended: {multi_result['total_exchanges']} exchanges across {multi_result['stages_completed']} stages")
+                
+                # Convert to ExtendedDialogue format
+                dialogue_items = [
+                    DialogueItem(speaker=item.speaker, text=item.text) 
+                    if hasattr(item, 'speaker') else 
+                    DialogueItem(speaker=item["speaker"], text=item["text"])
+                    for item in multi_result["dialogue"]
+                ]
+                
+                return ExtendedDialogue(
+                    scratchpad=multi_result["scratchpad"],
+                    name_of_guest=multi_result["name_of_guest"],
+                    dialogue=dialogue_items
+                )
+            else:
+                print("⚠️ Multi-stage generation failed, falling back to single-stage")
+                
+        except Exception as e:
+            print(f"❌ Multi-stage generation error: {e}")
+            print("🔄 Falling back to single-stage approach")
+    
+    # Original single-stage logic for all other cases
+    if output_model == ExtendedDialogue:
+        print("🎯 Attempting single-stage Extended dialogue...")
+        
+        # Try the enhanced single-stage approach
+        try:
+            enhanced_prompt, processed_text = optimize_for_extended_dialogue(system_prompt, input_text)
+            
+            for attempt in range(2):  # Reduced attempts since we have multi-stage fallback
+                print(f"📝 Single-stage Extended attempt {attempt + 1}/2")
+                result = call_llm(enhanced_prompt, processed_text, output_model)
+                
+                if len(result.dialogue) >= 35:  # Lower threshold since we have multi-stage backup
+                    print(f"✅ Single-stage Extended: {len(result.dialogue)} exchanges")
+                    return result
+                else:
+                    print(f"⚠️ Got {len(result.dialogue)} exchanges, trying multi-stage...")
+                    if MULTI_STAGE_AVAILABLE:
+                        # Fall back to multi-stage
+                        return generate_script(system_prompt, input_text, output_model)
+            
+            # If we get here, single-stage failed
+            print("❌ Single-stage Extended failed")
+            if MULTI_STAGE_AVAILABLE:
+                return generate_script(system_prompt, input_text, output_model)  # This will trigger multi-stage
+            else:
+                # Return best single attempt
+                return result
+                
+        except Exception as e:
+            print(f"❌ Single-stage Extended error: {e}")
+            if MULTI_STAGE_AVAILABLE:
+                return generate_script(system_prompt, input_text, output_model)
+            else:
+                raise
+    
+    # Original logic for Short, Medium, Long
     first_draft_dialogue = call_llm(system_prompt, input_text, output_model)
     
-    # Skip second pass for long content to avoid context overflow
-    if output_model in [LongDialogue, ExtendedDialogue]:
-        print(f"✅ Skipping second pass for {output_model.__name__} to avoid context overflow")
-        print(f"✅ Generated {len(first_draft_dialogue.dialogue)} exchanges in first pass")
+    # Skip second pass for Long to avoid context overflow
+    if output_model == LongDialogue:
+        print(f"✅ Skipping second pass for {output_model.__name__}")
         return first_draft_dialogue
 
-    # Call the LLM a second time to improve the dialogue (only for short/medium)
-    print("Doing second improvement pass for short/medium content...")
-    system_prompt_with_dialogue = f"{system_prompt}\n\nHere is the first draft of the dialogue you provided:\n\n{first_draft_dialogue.model_dump_json()}."
-    final_dialogue = call_llm(system_prompt_with_dialogue, "Please improve the dialogue. Make it more natural and engaging.", output_model)
-
+    # Second improvement pass for Short/Medium
+    system_prompt_with_dialogue = f"{system_prompt}\n\nFirst draft: {first_draft_dialogue.model_dump_json()}."
+    final_dialogue = call_llm(system_prompt_with_dialogue, "Please improve the dialogue.", output_model)
+    
     return final_dialogue
 
+def extract_focus_area_from_prompt(system_prompt: str) -> str:
+    """
+    Extract focus area from system prompt for context passing.
+    """
+    # Simple extraction - could be enhanced
+    if "CRITICAL FOCUS REQUIREMENT" in system_prompt:
+        lines = system_prompt.split('\n')
+        for line in lines:
+            if "CRITICAL FOCUS REQUIREMENT" in line:
+                # Try to extract the focus area name from the line
+                if "LLMs as Methodological Tools" in line:
+                    return "LLMs as Methodological Tools in HPSS Research"
+                elif "AI Ethics" in line:
+                    return "AI Ethics and Policy Implications"
+                # Add more patterns as needed
+    return None
+
+def optimize_for_extended_dialogue(system_prompt: str, text: str) -> tuple[str, str]:
+    """
+    Optimize prompts and content for single-stage Extended dialogue generation.
+    """
+    
+    extended_system_prompt = f"""{system_prompt}
+
+🚨 SINGLE-STAGE EXTENDED DIALOGUE 🚨
+
+You MUST create 50-70 exchanges in this single response. This is your only chance!
+
+CRITICAL SUCCESS FACTORS:
+1. COUNT as you write: 1, 2, 3... up to 50+
+2. Don't stop until you reach the target
+3. Each exchange should be substantial (3-5 sentences)
+4. Cover multiple subtopics thoroughly
+5. Include detailed examples and explanations
+
+STRUCTURE TEMPLATE:
+- Opening: 5 exchanges (intro + overview)
+- Topic 1 Deep Dive: 15-20 exchanges
+- Topic 2 Deep Dive: 15-20 exchanges  
+- Topic 3 Deep Dive: 10-15 exchanges
+- Synthesis & Conclusion: 5-10 exchanges
+- TOTAL: 50-70 exchanges
+
+⚠️ FAILURE CONDITION: Generating fewer than 40 exchanges
+✅ SUCCESS CONDITION: 50+ exchanges with comprehensive coverage
+
+JSON STRUCTURE:
+{{
+  "scratchpad": "Planning comprehensive 50-70 exchange discussion covering: [list all topics]",
+  "name_of_guest": "Dr. [Name]",
+  "dialogue": [
+    // ALL 50-70 EXCHANGES HERE - count as you go!
+  ]
+}}"""
+
+    # Truncate content to leave maximum room for dialogue generation
+    if len(text) > 5000:
+        text = text[:5000] + "\n\n[Content truncated to prioritize dialogue length]"
+    
+    return extended_system_prompt, text
 
 def call_llm(system_prompt: str, text: str, dialogue_format: Any) -> Any:
     """Call the LLM with the given prompt and dialogue format."""
@@ -317,9 +498,9 @@ def call_llm_fallback(system_prompt: str, text: str, dialogue_format: Any) -> An
         try:
             # Adjust max_tokens based on expected length to avoid truncation
             if dialogue_format == LongDialogue:
-                max_tokens = min(OLLAMA_MAX_TOKENS, 20000)  # Increase for long content
+                max_tokens = OLLAMA_MAX_TOKENS
             elif dialogue_format == ExtendedDialogue:
-                max_tokens = min(OLLAMA_MAX_TOKENS, 25000)  # Even more for extended
+                max_tokens = OLLAMA_MAX_TOKENS  
             else:
                 max_tokens = OLLAMA_MAX_TOKENS
             

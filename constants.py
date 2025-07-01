@@ -25,8 +25,9 @@ USE_OLLAMA = os.getenv("USE_OLLAMA", "true").lower() == "true"
 
 # Ollama API-related constants
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model, user can change this
-OLLAMA_MAX_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "32768"))  # INCREASED from 16384 to 32768
+OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL", "qwen2.5:32b")  # Default model, user can change this
+OLLAMA_MAX_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "40000"))  # INCREASED to 40000
+OLLAMA_CONTEXT_WINDOW = int(os.getenv("OLLAMA_CONTEXT_WINDOW", "65536"))
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
 
 # Fireworks API-related constants (kept as fallback) 

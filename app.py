@@ -53,6 +53,7 @@ from prompts import (
 )
 from schema import MediumDialogue, ShortDialogue, LongDialogue, ExtendedDialogue
 from utils import generate_podcast_audio, generate_script, parse_url
+from markdown_export import save_extended_dialogue_markdown, get_generation_method_info
 
 # Debug: Print available length modifiers at startup
 print("🔧 Available length modifiers:")
@@ -195,7 +196,52 @@ def generate_podcast(
         else:
             error_msg = f"Error generating script: {e}"
         raise gr.Error(error_msg)
+    
+    # See the Extended Dialogue process
+    if length == "Extended (15+ min)":
+        actual_exchanges = len(llm_output.dialogue)
+        print(f"📊 Extended Dialogue Results:")
+        print(f"   Generated: {actual_exchanges} exchanges")
+        print(f"   Method: {'Multi-stage' if actual_exchanges > 60 else 'Single-stage'}")
+        
+        # Show stage breakdown if multi-stage was used
+        if "Stage 1:" in llm_output.scratchpad:
+            print(f"   Stages: {llm_output.scratchpad}")
 
+    # Save Extended dialogues as markdown files
+    if length == "Extended (15+ min)" and len(llm_output.dialogue) >= 50:
+        try:
+            # Extract generation method and source info
+            generation_method, source_info = get_generation_method_info(llm_output.scratchpad)
+            
+            # Determine source information
+            if files:
+                file_names = [Path(f).name for f in files]
+                source_info = f"Generated from: {', '.join(file_names)}"
+            elif url:
+                source_info = f"Generated from: {url}"
+            
+            # Add focus area to source info if present
+            if focus_area and focus_area != "No Specific Focus":
+                source_info += f" (Focus: {focus_area})"
+            
+            # Save markdown file
+            markdown_file_path = save_extended_dialogue_markdown(
+                dialogue_items=llm_output.dialogue,
+                guest_name=llm_output.name_of_guest,
+                focus_area=focus_area,
+                source_info=source_info,
+                generation_method=generation_method
+            )
+            
+            # Log success
+            if markdown_file_path:
+                logger.info(f"Extended dialogue saved as markdown: {markdown_file_path}")
+            
+        except Exception as e:
+            # Don't fail the whole process if markdown saving fails
+            logger.error(f"Failed to save extended dialogue as markdown: {e}")
+    
     # Process the dialogue for transcript
     transcript = ""
     total_characters = 0
@@ -211,6 +257,11 @@ def generate_podcast(
     # Add model info to transcript - NEW: Include focus area info
     focus_info = f" - Focus: {focus_area}" if focus_area and focus_area != "No Specific Focus" else ""
     model_info = f"\n---\n*Generated using {'Ollama' if USE_OLLAMA else 'Fireworks API'} - Length: {length} ({len(llm_output.dialogue)} exchanges){focus_info}*"
+    
+    # INclude Markdown file info for extended exchanges
+    if length == "Extended (15+ min)" and len(llm_output.dialogue) >= 50:
+        model_info += f"\n*📝 Extended dialogue also saved as markdown file in `extended_dialogues/` folder*"
+    
     transcript += model_info
 
     # If transcript only, return early
