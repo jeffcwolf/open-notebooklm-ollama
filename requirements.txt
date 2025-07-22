@@ -108,27 +108,3 @@ websockets==12.0
 wsproto==1.2.0
 yarl==1.13.1
 zipp==3.20.2
-
-
-# Core dependencies
-gradio>=4.0.0
-loguru
-pypdf
-pydub
-requests
-pydantic
-
-# LLM and AI dependencies
-instructor>=1.0.0
-openai>=1.0.0  # Used for Ollama OpenAI-compatible API
-
-# Audio processing
-bark
-scipy
-gradio-client
-
-# Optional: Keep Fireworks as fallback
-fireworks-ai
-
-# Environment management
-python-dotenv
