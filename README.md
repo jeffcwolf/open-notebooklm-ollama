@@ -1,5 +1,7 @@
 # Open NotebookLM Ollama 🎙️
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18662009.svg)](https://doi.org/10.5281/zenodo.18662009)
+
 A **local, privacy-focused** fork of [Open NotebookLM](https://github.com/gabrielchua/open-notebooklm) that generates engaging podcast-style conversations from your documents using **Ollama** instead of paid APIs.
 
 > **Why this fork?** The original project requires Fireworks API (paid service). This version runs entirely on your local machine using Ollama, giving you complete privacy and no API costs.
