@@ -170,4 +170,6 @@ gradio_cached_examples/
 id_rsa
 
 # Build artifacts
+*.egg-info
+*.pyc
 release/
