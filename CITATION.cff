@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+title: "open-notebooklm-ollama"
+type: software
+authors:
+  - family-names: "Wolf"
+    given-names: "Jeffrey C."
+    email: "research_coder@noreply.codeberg.org"
+    orcid: "https://orcid.org/0009-0007-9879-4476"
+version: "0.1.0"
+license: Apache-2.0
+date-released: "2026-02-16"
+repository-code: "https://codeberg.org/research_coder/open-notebooklm-ollama"
+abstract: "A **local, privacy-focused** fork of [Open NotebookLM](https://github.com/gabrielchua/open-notebooklm) that generates engaging podcast-style conversations from your documents using **Ollama** instead of paid APIs."
+keywords:
+  - research-software

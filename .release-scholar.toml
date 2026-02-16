@@ -1,0 +1,9 @@
+forge = "codeberg"
+required_files = [
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "CITATION.cff",
+]
+archive_dir = "release"
+language = "eng"
