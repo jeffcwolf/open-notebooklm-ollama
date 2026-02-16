@@ -163,3 +163,11 @@ cython_debug/
 
 gradio_cached_examples/
 .DS_Store
+
+# Security
+*.pem
+*.key
+id_rsa
+
+# Build artifacts
+release/
