@@ -1,0 +1,56 @@
+name: open-notebooklm-ollama
+description: "A local, privacy-focused fork of Open NotebookLM that generates podcast-style conversations from documents using Ollama instead of paid APIs."
+status: stable
+category: experiment
+language: python
+forge: github
+visibility: public
+tags: [llm, ollama, privacy, podcast, document-analysis]
+notes: "Fork of gabrielchua/open-notebooklm. Runs entirely locally — no API keys or costs required."
+created: ""
+last_touched: ""
+# ── Website publication (functionsandfolios.com) ──────────────────────────────
+website:
+  publish: true
+  slug: open-notebooklm-ollama
+  order: 99
+  category: "Open-Source Tools"
+  audience: "Researchers wanting local, private AI-assisted document processing"
+  platform: [macOS, Windows, Linux]
+  license: MIT
+  internal_url: "/digital-projects/open-notebooklm-ollama"
+  video_url: ""
+  download_url: "https://github.com/jeffcwolf/open-notebooklm-ollama"
+  screenshots: []
+  doi: "10.5281/zenodo.18662009"
+  description_long: |
+    A local, privacy-focused fork of Open NotebookLM that generates
+    podcast-style conversations from your documents using Ollama instead
+    of paid APIs. Everything runs on your own machine — no API keys,
+    no data sent to third parties, no costs beyond setup.
+
+    ## What It Does
+
+    Upload a PDF or paste a URL, choose a tone and length, and the tool
+    generates a structured two-person conversation discussing the content.
+    Conversations range from short summaries (1–2 minutes) to extended
+    academic-level dialogues (50–70 exchanges, 15+ minutes).
+
+    ## Key Features
+
+    - **Local LLM support** — runs any Ollama model (Qwen, Llama, Mistral,
+      etc.) with no external API dependency
+    - **Focus areas** — anchor conversations around specific themes such as
+      research methods, AI ethics, or practical implementation
+    - **Deep discussion mode** — generates rigorous, academically-toned
+      conversations with probing questions and evidence-based responses
+    - **Extended dialogues** — multi-stage generation for 50–70 exchange
+      conversations exported as formatted markdown
+    - **13+ languages** — multilingual support throughout
+
+    ## Why This Fork
+
+    The original Open NotebookLM requires a paid Fireworks API key. This
+    fork replaces that dependency entirely with Ollama, making it suitable
+    for sensitive research material and institutional contexts where data
+    cannot leave the local machine.
