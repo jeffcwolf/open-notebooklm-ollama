@@ -1,7 +1,7 @@
-name: open-notebooklm-ollama
+name: Open NotebookLM Ollama
 description: "A local, privacy-focused fork of Open NotebookLM that generates podcast-style conversations from documents using Ollama instead of paid APIs."
 status: stable
-category: experiment
+category: other
 language: python
 forge: github
 visibility: public
@@ -17,7 +17,7 @@ website:
   category: "Open-Source Tools"
   audience: "Researchers wanting local, private AI-assisted document processing"
   platform: [macOS, Windows, Linux]
-  license: MIT
+  license: Apache 2.0
   internal_url: "/digital-projects/open-notebooklm-ollama"
   video_url: ""
   download_url: "https://github.com/jeffcwolf/open-notebooklm-ollama"
