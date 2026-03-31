@@ -13,7 +13,7 @@ last_touched: ""
 website:
   publish: true
   slug: open-notebooklm-ollama
-  order: 99
+  order: 10
   category: "Open-Source Tools"
   audience: "Researchers wanting local, private AI-assisted document processing"
   platform: [macOS, Windows, Linux]
